@@ -31,6 +31,7 @@ public class MainActivity extends AppCompatActivity {
 
         mUserName = ANONYMOUS;
         // initialize the reference to Views
+        
 
 
     }
