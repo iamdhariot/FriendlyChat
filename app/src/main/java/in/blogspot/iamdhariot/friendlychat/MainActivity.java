@@ -1,6 +1,8 @@
 package in.blogspot.iamdhariot.friendlychat;
 
+import android.content.Intent;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.text.Editable;
@@ -17,12 +19,19 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import com.firebase.ui.auth.AuthUI;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.ChildEventListener;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
@@ -39,10 +48,16 @@ public class MainActivity extends AppCompatActivity {
     private Button mSendbutton;
     private String mUserName;
 
-    // firebase database stuffs
+    // firebase instance
+
     private DatabaseReference mDatabaseReference;
     private FirebaseDatabase mFirebaseDatabase;
+    private   ChildEventListener childEventListener;
 
+    private FirebaseAuth mFirebaseAuth;
+    private FirebaseAuth.AuthStateListener mAuthStateListener;
+
+    public static final int RC_SIGN_IN = 1;
 
 
     @Override
@@ -50,9 +65,11 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // initialize the the DB
+        // initialize the fiebase stuffs
         mFirebaseDatabase = FirebaseDatabase.getInstance();
         mDatabaseReference = mFirebaseDatabase.getReference().child("Messages");
+        mFirebaseAuth = FirebaseAuth.getInstance();
+
 
         mUserName = ANONYMOUS;
         // initialize the reference to Views
@@ -110,7 +127,7 @@ public class MainActivity extends AppCompatActivity {
                 Message message = new Message(mMsgEditText.getText().toString(),mUserName,null);
                 // by using push to database
                 mDatabaseReference.push().setValue(message);
-               
+
 
 
 
@@ -122,11 +139,91 @@ public class MainActivity extends AppCompatActivity {
         });
 
 
+       // AuthStateListener
+        mAuthStateListener = new FirebaseAuth.AuthStateListener() {
+            @Override
+            public void onAuthStateChanged(@NonNull FirebaseAuth firebaseAuth) {
+
+                FirebaseUser user = firebaseAuth.getCurrentUser();
+                if(user!=null){
+                    // user signed in
+                    Toast.makeText(MainActivity.this, "You're signed in. Welcome to the FriendlyChat App.", Toast.LENGTH_SHORT).show();
+                    onSigninInitalize(user.getDisplayName());
+
+                    
+                }else{
+                    // user is signed out
+                    onSignoutCleanup();
+
+                    startActivityForResult(
+                            AuthUI.getInstance()
+                                    .createSignInIntentBuilder()
+                                    .setAvailableProviders(Arrays.asList(
+                                            new AuthUI.IdpConfig.EmailBuilder().build(),
+
+                                            new AuthUI.IdpConfig.GoogleBuilder().build()))
+                                    .build(),
+                            RC_SIGN_IN);
+                }
+
+            }
+        };
+
+    }
+
+
+
+    private void onSigninInitalize(String userName) {
+        mUserName = userName;
+        attachDatabaseReadListener();
 
 
 
     }
+    private void onSignoutCleanup() {
+        mUserName = ANONYMOUS;
+        mMessageAdapter.clear();
+        detachDatabaseReadListner();
+    }
 
+    private void attachDatabaseReadListener(){
+        if(childEventListener==null){
+            childEventListener = new ChildEventListener() {
+                @Override
+                public void onChildAdded(@NonNull DataSnapshot dataSnapshot, @Nullable String s) {
+
+                    Message messages = dataSnapshot.getValue(Message.class);
+                    mMessageAdapter.add(messages);
+
+                }
+
+                @Override
+                public void onChildChanged(@NonNull DataSnapshot dataSnapshot, @Nullable String s) {
+                }
+
+                @Override
+                public void onChildRemoved(@NonNull DataSnapshot dataSnapshot) {
+                }
+
+                @Override
+                public void onChildMoved(@NonNull DataSnapshot dataSnapshot, @Nullable String s) {
+                }
+
+                @Override
+                public void onCancelled(@NonNull DatabaseError databaseError) {
+                }
+            };
+
+
+            mDatabaseReference.addChildEventListener(childEventListener);
+        }
+
+    }
+    private void detachDatabaseReadListner(){
+        if(childEventListener!=null) {
+            mDatabaseReference.removeEventListener(childEventListener);
+            childEventListener=null;
+        }}
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         MenuInflater  menuInflater = getMenuInflater();
@@ -137,6 +234,50 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        return super.onOptionsItemSelected(item);
+        switch (item.getItemId()) {
+
+            case R.id.sign_out_menu:
+                // sign out
+                AuthUI.getInstance().signOut(this);
+                return true;
+            default:
+            return super.onOptionsItemSelected(item);
+        }
+
     }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        mFirebaseAuth.removeAuthStateListener(mAuthStateListener);
+        detachDatabaseReadListner();
+        mMessageAdapter.clear();
+
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        mFirebaseAuth.addAuthStateListener(mAuthStateListener);
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if(requestCode==RC_SIGN_IN){
+            if(resultCode==RESULT_OK){
+                Toast.makeText(this,"Signed in!",Toast.LENGTH_SHORT).show();
+
+
+            }else if(resultCode == RESULT_CANCELED){
+                Toast.makeText(this,"Sign in cancelled.",Toast.LENGTH_SHORT).show();
+                finish();
+
+
+            }
+
+        }
+    }
+
+
 }
