@@ -1,10 +1,9 @@
 package in.blogspot.iamdhariot.friendlychat;
-
 import android.content.Intent;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.v7.app.AppCompatActivity;
+import android.net.Uri;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
+import android.support.v7.app.AppCompatActivity;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.TextWatcher;
@@ -20,8 +19,7 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.firebase.ui.auth.AuthUI;
-import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.Task;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.ChildEventListener;
@@ -29,6 +27,9 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,125 +37,116 @@ import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
+    private static final String TAG = "MainActivity";
 
-    private static String TAG = "MainActivity";
-    public static  final  String   ANONYMOUS= "anonymous";
-    public static final int DEFAULT_MSG_LENGTH = 1000;
-    private ListView mMsgListView;
-    private  MessageAdapter mMessageAdapter;
-    private ProgressBar mProgressBar;
-    private ImageButton mPhotoPikerButton;
-    private EditText mMsgEditText;
-    private Button mSendbutton;
-    private String mUserName;
-
-    // firebase instance
-
-    private DatabaseReference mDatabaseReference;
-    private FirebaseDatabase mFirebaseDatabase;
-    private   ChildEventListener childEventListener;
-
-    private FirebaseAuth mFirebaseAuth;
-    private FirebaseAuth.AuthStateListener mAuthStateListener;
+    public static final String ANONYMOUS = "anonymous";
+    public static final int DEFAULT_MSG_LENGTH_LIMIT = 1000;
 
     public static final int RC_SIGN_IN = 1;
+    private static final int RC_PHOTO_PICKER = 2;
 
+    private ListView mMessageListView;
+    private MessageAdapter mMessageAdapter;
+    private ProgressBar mProgressBar;
+    private ImageButton mPhotoPickerButton;
+    private EditText mMessageEditText;
+    private Button mSendButton;
+
+    private String mUsername;
+
+    // Firebase instance variables
+    private FirebaseDatabase mFirebaseDatabase;
+    private DatabaseReference mMessagesDatabaseReference;
+    private ChildEventListener mChildEventListener;
+    private FirebaseAuth mFirebaseAuth;
+    private FirebaseAuth.AuthStateListener mAuthStateListener;
+    private FirebaseStorage mFirebaseStorage;
+    private StorageReference mChatPhotosStorageReference;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // initialize the fiebase stuffs
+        mUsername = ANONYMOUS;
+
+        // Initialize Firebase components
         mFirebaseDatabase = FirebaseDatabase.getInstance();
-        mDatabaseReference = mFirebaseDatabase.getReference().child("Messages");
         mFirebaseAuth = FirebaseAuth.getInstance();
+        mFirebaseStorage = FirebaseStorage.getInstance();
 
+        mMessagesDatabaseReference = mFirebaseDatabase.getReference().child("messages");
+        mChatPhotosStorageReference = mFirebaseStorage.getReference().child("chat_photos");
 
-        mUserName = ANONYMOUS;
-        // initialize the reference to Views
+        // Initialize references to views
+        mProgressBar = (ProgressBar) findViewById(R.id.progressBar);
+        mMessageListView = (ListView) findViewById(R.id.messageListView);
+        mPhotoPickerButton = (ImageButton) findViewById(R.id.photoPickerButton);
+        mMessageEditText = (EditText) findViewById(R.id.messageEditText);
+        mSendButton = (Button) findViewById(R.id.sendButton);
 
-        mProgressBar = (ProgressBar)findViewById(R.id.progressBar);
-        mMsgListView = (ListView)findViewById(R.id.messageListView);
-        mPhotoPikerButton = (ImageButton)findViewById(R.id.photoPickerButton);
-        mMsgEditText = (EditText)findViewById(R.id.messageEditText);
-        mSendbutton = (Button)findViewById(R.id.sendButton);
-        // initialize the ListView and its adapter
-        List<Message> messages = new ArrayList<>();
-        mMessageAdapter = new MessageAdapter(this,R.layout.item_message,messages);
-        mMsgListView.setAdapter(mMessageAdapter);
-        // initialize the progress bar
+        // Initialize message ListView and its adapter
+        List<Message> friendlyMessages = new ArrayList<>();
+        mMessageAdapter = new MessageAdapter(this, R.layout.item_message, friendlyMessages);
+        mMessageListView.setAdapter(mMessageAdapter);
+
+        // Initialize progress bar
         mProgressBar.setVisibility(ProgressBar.INVISIBLE);
+
         // ImagePickerButton shows an image picker to upload a image for a message
-        mPhotoPikerButton.setOnClickListener(new View.OnClickListener() {
+        mPhotoPickerButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View v) {
-                // fire to pick a image
+            public void onClick(View view) {
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("image/jpeg");
+                intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+                startActivityForResult(Intent.createChooser(intent, "Complete action using"), RC_PHOTO_PICKER);
             }
         });
 
         // Enable Send button when there's text to send
-        mMsgEditText.addTextChangedListener(new TextWatcher() {
+        mMessageEditText.addTextChangedListener(new TextWatcher() {
             @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-
+            public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
             }
 
             @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-
-                if(s.toString().trim().length()>0){
-                    mSendbutton.setEnabled(true);
-
-                }else{
-                    mSendbutton.setEnabled(false);
+            public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+                if (charSequence.toString().trim().length() > 0) {
+                    mSendButton.setEnabled(true);
+                } else {
+                    mSendButton.setEnabled(false);
                 }
             }
 
             @Override
-            public void afterTextChanged(Editable s) {
-
+            public void afterTextChanged(Editable editable) {
             }
         });
-
-        mMsgEditText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(DEFAULT_MSG_LENGTH)});
+        mMessageEditText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(DEFAULT_MSG_LENGTH_LIMIT)});
 
         // Send button sends a message and clears the EditText
-        mSendbutton.setOnClickListener(new View.OnClickListener() {
+        mSendButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View v) {
-                // send the msg
-                Message message = new Message(mMsgEditText.getText().toString(),mUserName,null);
-                // by using push to database
-                mDatabaseReference.push().setValue(message);
+            public void onClick(View view) {
+                Message friendlyMessage = new Message(mMessageEditText.getText().toString(), mUsername, null);
+                mMessagesDatabaseReference.push().setValue(friendlyMessage);
 
-
-
-
-
-
-                // clear the edit text view
-                mMsgEditText.setText("");
+                // Clear input box
+                mMessageEditText.setText("");
             }
         });
 
-
-       // AuthStateListener
         mAuthStateListener = new FirebaseAuth.AuthStateListener() {
             @Override
             public void onAuthStateChanged(@NonNull FirebaseAuth firebaseAuth) {
-
                 FirebaseUser user = firebaseAuth.getCurrentUser();
-                if(user!=null){
-                    // user signed in
-                    Toast.makeText(MainActivity.this, "You're signed in. Welcome to the FriendlyChat App.", Toast.LENGTH_SHORT).show();
-                    onSigninInitalize(user.getDisplayName());
-
-                    
-                }else{
-                    // user is signed out
-                    onSignoutCleanup();
-
+                if (user != null) {
+                    // User is signed in
+                    onSignedInInitialize(user.getDisplayName());
+                } else {
+                    // User is signed out
+                    onSignedOutCleanup();
                     startActivityForResult(
                             AuthUI.getInstance()
                                     .createSignInIntentBuilder()
@@ -165,94 +157,44 @@ public class MainActivity extends AppCompatActivity {
                                     .build(),
                             RC_SIGN_IN);
                 }
-
             }
         };
-
     }
 
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == RC_SIGN_IN) {
+            if (resultCode == RESULT_OK) {
+                // Sign-in succeeded, set up the UI
+                Toast.makeText(this, "Signed in!", Toast.LENGTH_SHORT).show();
+            } else if (resultCode == RESULT_CANCELED) {
+                // Sign in was canceled by the user, finish the activity
+                Toast.makeText(this, "Sign in canceled", Toast.LENGTH_SHORT).show();
+                finish();
+            }
+        } else if (requestCode == RC_PHOTO_PICKER && resultCode == RESULT_OK) {
+            Uri selectedImageUri = data.getData();
 
+            // Get a reference to store file at chat_photos/<FILENAME>
+            final StorageReference photoRef = mChatPhotosStorageReference.child(selectedImageUri.getLastPathSegment());
 
-    private void onSigninInitalize(String userName) {
-        mUserName = userName;
-        attachDatabaseReadListener();
-
-
-
-    }
-    private void onSignoutCleanup() {
-        mUserName = ANONYMOUS;
-        mMessageAdapter.clear();
-        detachDatabaseReadListner();
-    }
-
-    private void attachDatabaseReadListener(){
-        if(childEventListener==null){
-            childEventListener = new ChildEventListener() {
-                @Override
-                public void onChildAdded(@NonNull DataSnapshot dataSnapshot, @Nullable String s) {
-
-                    Message messages = dataSnapshot.getValue(Message.class);
-                    mMessageAdapter.add(messages);
-
-                }
-
-                @Override
-                public void onChildChanged(@NonNull DataSnapshot dataSnapshot, @Nullable String s) {
-                }
-
-                @Override
-                public void onChildRemoved(@NonNull DataSnapshot dataSnapshot) {
-                }
-
-                @Override
-                public void onChildMoved(@NonNull DataSnapshot dataSnapshot, @Nullable String s) {
-                }
-
-                @Override
-                public void onCancelled(@NonNull DatabaseError databaseError) {
-                }
-            };
-
-
-            mDatabaseReference.addChildEventListener(childEventListener);
+            photoRef.putFile(selectedImageUri)
+                    .addOnSuccessListener(this, new OnSuccessListener<UploadTask.TaskSnapshot>() {
+                        @Override
+                        public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
+                            //When the image has successfully uploaded, get its download URL
+                            photoRef.getDownloadUrl().addOnSuccessListener(new OnSuccessListener<Uri>() {
+                                @Override
+                                public void onSuccess(Uri uri) {
+                                    Uri dlUri = uri;
+                                    Message friendlyMessage = new Message(null, mUsername, dlUri.toString());
+                                    mMessagesDatabaseReference.push().setValue(friendlyMessage);
+                                }
+                            });
+                        }
+                    });
         }
-
-    }
-    private void detachDatabaseReadListner(){
-        if(childEventListener!=null) {
-            mDatabaseReference.removeEventListener(childEventListener);
-            childEventListener=null;
-        }}
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        MenuInflater  menuInflater = getMenuInflater();
-        menuInflater.inflate(R.menu.main_menu,menu);
-
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-
-            case R.id.sign_out_menu:
-                // sign out
-                AuthUI.getInstance().signOut(this);
-                return true;
-            default:
-            return super.onOptionsItemSelected(item);
-        }
-
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        mFirebaseAuth.removeAuthStateListener(mAuthStateListener);
-        detachDatabaseReadListner();
-        mMessageAdapter.clear();
-
     }
 
     @Override
@@ -262,22 +204,66 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if(requestCode==RC_SIGN_IN){
-            if(resultCode==RESULT_OK){
-                Toast.makeText(this,"Signed in!",Toast.LENGTH_SHORT).show();
+    protected void onPause() {
+        super.onPause();
+        if (mAuthStateListener != null) {
+            mFirebaseAuth.removeAuthStateListener(mAuthStateListener);
+        }
+        mMessageAdapter.clear();
+        detachDatabaseReadListener();
+    }
 
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        MenuInflater inflater = getMenuInflater();
+        inflater.inflate(R.menu.main_menu, menu);
+        return true;
+    }
 
-            }else if(resultCode == RESULT_CANCELED){
-                Toast.makeText(this,"Sign in cancelled.",Toast.LENGTH_SHORT).show();
-                finish();
-
-
-            }
-
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.sign_out_menu:
+                AuthUI.getInstance().signOut(this);
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
         }
     }
 
+    private void onSignedInInitialize(String username) {
+        mUsername = username;
+        attachDatabaseReadListener();
+    }
 
+    private void onSignedOutCleanup() {
+        mUsername = ANONYMOUS;
+        mMessageAdapter.clear();
+        detachDatabaseReadListener();
+    }
+
+    private void attachDatabaseReadListener() {
+        if (mChildEventListener == null) {
+            mChildEventListener = new ChildEventListener() {
+                @Override
+                public void onChildAdded(DataSnapshot dataSnapshot, String s) {
+                    Message friendlyMessage = dataSnapshot.getValue(Message.class);
+                    mMessageAdapter.add(friendlyMessage);
+                }
+
+                public void onChildChanged(DataSnapshot dataSnapshot, String s) {}
+                public void onChildRemoved(DataSnapshot dataSnapshot) {}
+                public void onChildMoved(DataSnapshot dataSnapshot, String s) {}
+                public void onCancelled(DatabaseError databaseError) {}
+            };
+            mMessagesDatabaseReference.addChildEventListener(mChildEventListener);
+        }
+    }
+
+    private void detachDatabaseReadListener() {
+        if (mChildEventListener != null) {
+            mMessagesDatabaseReference.removeEventListener(mChildEventListener);
+            mChildEventListener = null;
+        }
+    }
 }
